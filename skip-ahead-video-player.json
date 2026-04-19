@@ -1,0 +1,38 @@
+{
+  "id": "skip-ahead-video-player",
+  "name": "Skip Ahead Video Player Button",
+  "version": "1.0.0",
+  "manifestURI": "",
+  "language": "typescript",
+  "type": "plugin",
+  "description": "Adds a skip-ahead button next to the video timestamp.",
+  "author": "Ennio",
+  "icon": "",
+  "website": "",
+  "readme": "",
+  "notes": "",
+  "lang": "multi",
+  "payload": "",
+  "payloadURI": "C:/Users/Ennio/Documents/dev/websites/seanime-skip-extension/skip-ahead-video-player.ts",
+  "userConfig": {
+    "version": 1,
+    "requiresConfig": false,
+    "fields": [
+      {
+        "type": "text",
+        "name": "skipSeconds",
+        "label": "Skip Ahead Seconds",
+        "default": "85"
+      }
+    ]
+  },
+  "plugin": {
+    "version": "1",
+    "permissions": {
+      "scopes": [
+        "playback"
+      ]
+    }
+  },
+  "isDevelopment": true
+}
