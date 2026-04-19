@@ -5,7 +5,7 @@
   "manifestURI": "",
   "language": "typescript",
   "type": "plugin",
-  "description": "Adds a skip-ahead button next to the video timestamp.",
+  "description": "Adds a skip-ahead button next to the video timestamp. Useful for skipping intros or recaps in anime episodes.",
   "author": "Ennio",
   "icon": "",
   "website": "",
@@ -13,7 +13,7 @@
   "notes": "",
   "lang": "multi",
   "payload": "",
-  "payloadURI": "C:/Users/Ennio/Documents/dev/websites/seanime-skip-extension/skip-ahead-video-player.ts",
+  "payloadURI": "https://raw.githubusercontent.com/EnnioMrk/seanime-skip-extension/refs/heads/main/skip-ahead-video-player.ts",
   "userConfig": {
     "version": 1,
     "requiresConfig": false,
