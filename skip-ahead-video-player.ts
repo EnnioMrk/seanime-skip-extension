@@ -3,26 +3,26 @@
 /// <reference path="./system.d.ts" />
 /// <reference path="./core.d.ts" />
 
-const DEFAULT_SKIP_SECONDS = 85
-const MIN_SKIP_SECONDS = 1
-const MAX_SKIP_SECONDS = 3600
-
-const TIMESTAMP_SELECTOR = '[data-vc-element="timestamp"]'
-const BUTTON_SELECTOR = '[data-seanime-skip-ahead-button="true"]'
-
-function getConfiguredSkipSeconds() {
-    const rawValue = $getUserPreference("skipSeconds")
-    const parsed = parseInt(rawValue || "", 10)
-
-    if (isNaN(parsed)) return DEFAULT_SKIP_SECONDS
-    if (parsed < MIN_SKIP_SECONDS) return MIN_SKIP_SECONDS
-    if (parsed > MAX_SKIP_SECONDS) return MAX_SKIP_SECONDS
-
-    return parsed
-}
-
 function init() {
     $ui.register((ctx) => {
+        const DEFAULT_SKIP_SECONDS = 85
+        const MIN_SKIP_SECONDS = 1
+        const MAX_SKIP_SECONDS = 3600
+
+        const TIMESTAMP_SELECTOR = '[data-vc-element="timestamp"]'
+        const BUTTON_SELECTOR = '[data-seanime-skip-ahead-button="true"]'
+
+        function getConfiguredSkipSeconds() {
+            const rawValue = $getUserPreference("skipSeconds")
+            const parsed = parseInt(rawValue || "", 10)
+
+            if (isNaN(parsed)) return DEFAULT_SKIP_SECONDS
+            if (parsed < MIN_SKIP_SECONDS) return MIN_SKIP_SECONDS
+            if (parsed > MAX_SKIP_SECONDS) return MAX_SKIP_SECONDS
+
+            return parsed
+        }
+
         const skipSeconds = getConfiguredSkipSeconds()
         const buttonText = "+" + skipSeconds + "s"
 
