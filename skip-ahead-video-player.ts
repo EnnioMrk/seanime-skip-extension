@@ -9,7 +9,16 @@ function init() {
         const MIN_SKIP_SECONDS = 1
         const MAX_SKIP_SECONDS = 3600
 
-        const TIMESTAMP_SELECTOR = '[data-vc-element="timestamp"]'
+        const TIMESTAMP_SELECTORS = [
+            '[data-vc-element="timestamp"]',
+            '[data-vc-timestamp-type]'
+        ]
+        const OBSERVE_SELECTORS = [
+            '[data-vc-element="timestamp"]',
+            '[data-vc-timestamp-type]',
+            '[data-vc-element="control-bar-main-section"]',
+            '[data-vc-element="control-bar"]'
+        ]
         const BUTTON_SELECTOR = '[data-seanime-skip-ahead-button="true"]'
 
         function getConfiguredSkipSeconds() {
@@ -23,12 +32,74 @@ function init() {
             return parsed
         }
 
-        const skipSeconds = getConfiguredSkipSeconds()
-        const buttonText = "+" + skipSeconds + "s"
+        let observerStops = []
+        let cancelPolling = null
 
-        let stopObserving = null
+        function cleanupObservers() {
+            for (let i = 0; i < observerStops.length; i += 1) {
+                observerStops[i]()
+            }
+            observerStops = []
+        }
+
+        function getButtonText() {
+            return "+" + getConfiguredSkipSeconds() + "s"
+        }
+
+        function dedupeById(elements) {
+            const seen = {}
+            const unique = []
+
+            for (let i = 0; i < elements.length; i += 1) {
+                const el = elements[i]
+                if (!el || !el.id) continue
+                if (seen[el.id]) continue
+                seen[el.id] = true
+                unique.push(el)
+            }
+
+            return unique
+        }
+
+        async function isLikelyVisible(element) {
+            try {
+                const display = await element.getComputedStyle("display")
+                if (display === "none") return false
+
+                const visibility = await element.getComputedStyle("visibility")
+                if (visibility === "hidden") return false
+
+                const opacity = await element.getComputedStyle("opacity")
+                if (opacity === "0") return false
+
+                return true
+            } catch (error) {
+                return true
+            }
+        }
+
+        async function findTargetTimestamp() {
+            let allTimestamps = []
+
+            for (let i = 0; i < TIMESTAMP_SELECTORS.length; i += 1) {
+                const timestamps = await ctx.dom.query(TIMESTAMP_SELECTORS[i])
+                allTimestamps = allTimestamps.concat(timestamps)
+            }
+
+            const uniqueTimestamps = dedupeById(allTimestamps)
+            if (uniqueTimestamps.length === 0) return null
+
+            for (let i = 0; i < uniqueTimestamps.length; i += 1) {
+                if (await isLikelyVisible(uniqueTimestamps[i])) {
+                    return uniqueTimestamps[i]
+                }
+            }
+
+            return uniqueTimestamps[0]
+        }
 
         async function ensureSkipButton(timestampElement) {
+            const buttonText = getButtonText()
             const parent = await timestampElement.getParent()
             if (!parent) return
 
@@ -43,6 +114,10 @@ function init() {
             button.setAttribute("data-seanime-skip-ahead-button", "true")
             button.setText(buttonText)
 
+            button.setStyle("display", "inline-flex")
+            button.setStyle("align-items", "center")
+            button.setStyle("justify-content", "center")
+            button.setStyle("flex-shrink", "0")
             button.setStyle("margin-left", "0.5rem")
             button.setStyle("padding", "0.1rem 0.45rem")
             button.setStyle("height", "1.5rem")
@@ -64,6 +139,7 @@ function init() {
 
             button.addEventListener("click", () => {
                 try {
+                    const skipSeconds = getConfiguredSkipSeconds()
                     const playbackStatus = ctx.videoCore.getPlaybackStatus()
                     if (!playbackStatus || playbackStatus.duration <= 1) return
 
@@ -77,20 +153,55 @@ function init() {
             timestampElement.after(button)
         }
 
-        ctx.dom.onMainTabReady(() => {
-            if (stopObserving) {
-                stopObserving()
+        async function attachButtons() {
+            const targetTimestamp = await findTargetTimestamp()
+            if (!targetTimestamp) return
+
+            await ensureSkipButton(targetTimestamp)
+
+            const allButtons = await ctx.dom.query(BUTTON_SELECTOR)
+            const uniqueButtons = dedupeById(allButtons)
+
+            let targetButton = null
+            const targetParent = await targetTimestamp.getParent()
+            if (targetParent) {
+                targetButton = await targetParent.queryOne(BUTTON_SELECTOR)
             }
 
-            const result = ctx.dom.observe(TIMESTAMP_SELECTOR, async (timestamps) => {
-                for (let i = 0; i < timestamps.length; i += 1) {
-                    await ensureSkipButton(timestamps[i])
+            for (let i = 0; i < uniqueButtons.length; i += 1) {
+                if (!targetButton || uniqueButtons[i].id !== targetButton.id) {
+                    uniqueButtons[i].remove()
                 }
-            })
+            }
+        }
 
-            stopObserving = result[0]
-            const refetch = result[1]
-            refetch()
+        function start() {
+            cleanupObservers()
+
+            for (let i = 0; i < OBSERVE_SELECTORS.length; i += 1) {
+                const result = ctx.dom.observe(OBSERVE_SELECTORS[i], () => {
+                    attachButtons()
+                })
+                observerStops.push(result[0])
+                result[1]()
+            }
+
+            if (cancelPolling) {
+                cancelPolling()
+            }
+            cancelPolling = ctx.setInterval(() => {
+                attachButtons()
+            }, 1500)
+
+            attachButtons()
+        }
+
+        ctx.dom.onReady(() => {
+            start()
+        })
+
+        ctx.dom.onMainTabReady(() => {
+            start()
         })
     })
 }
