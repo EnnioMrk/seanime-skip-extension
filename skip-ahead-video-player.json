@@ -1,16 +1,13 @@
 {
     "id": "skip-ahead-video-player",
     "name": "Skip Ahead",
-    "version": "1.2.1",
+    "version": "1.2.2",
     "manifestURI": "https://raw.githubusercontent.com/EnnioMrk/seanime-skip-extension/refs/heads/main/skip-ahead-video-player.json",
     "language": "typescript",
     "type": "plugin",
     "description": "Adds a skip-ahead button to the video player control bar with configurable position. Useful for skipping intros or recaps in anime episodes.",
     "author": "EnnioMrk",
     "icon": "https://raw.githubusercontent.com/EnnioMrk/seanime-skip-extension/refs/heads/main/icon-128x128.png",
-    "website": "",
-    "readme": "https://raw.githubusercontent.com/EnnioMrk/seanime-skip-extension/refs/heads/main/README.md",
-    "notes": "",
     "lang": "multi",
     "payloadURI": "https://raw.githubusercontent.com/EnnioMrk/seanime-skip-extension/refs/heads/main/skip-ahead-video-player.ts",
     "userConfig": {
