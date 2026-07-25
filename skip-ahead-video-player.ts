@@ -5,21 +5,53 @@
 
 function init() {
     $ui.register((ctx) => {
+        const LOG_PREFIX = "[skip-ahead-plugin]"
         const DEFAULT_SKIP_SECONDS = 85
         const MIN_SKIP_SECONDS = 1
         const MAX_SKIP_SECONDS = 3600
+        const RUN_ID = String(Date.now())
 
-        const TIMESTAMP_SELECTORS = [
+        const POSITION_SELECTORS = {
+            "after-next-episode": [
+                '[data-vc-element="control-bar"] button[data-vc-element="control-button"]:nth-child(3)',
+                'button[data-vc-element="control-button"]:has(svg path[d="m9 18 6-6-6-6"])',
+                '[data-vc-element="next-episode-button"]',
+                '[data-vc-element="control-bar-next-episode"]'
+            ],
+            "after-play-button": [
+                'button[data-vc-element="control-button"][data-vc-state="paused"]',
+                'button[data-vc-element="control-button"][data-vc-state="playing"]',
+                '[data-vc-element="play-button"]',
+                '[data-vc-element="play-pause-button"]'
+            ],
+            "after-timestamp": [
+                '[data-vc-element="timestamp"]',
+                '[data-vc-timestamp-type]'
+            ]
+        }
+
+        const FALLBACK_SELECTORS = [
             '[data-vc-element="timestamp"]',
             '[data-vc-timestamp-type]'
         ]
+
         const OBSERVE_SELECTORS = [
             '[data-vc-element="timestamp"]',
             '[data-vc-timestamp-type]',
+            'button[data-vc-element="control-button"][data-vc-state="paused"]',
+            'button[data-vc-element="control-button"][data-vc-state="playing"]',
+            '[data-vc-element="control-bar"] button[data-vc-element="control-button"]:nth-child(3)',
+            '[data-vc-element="settings-button"]',
+            '[data-vc-element="settings-menu-button"]',
             '[data-vc-element="control-bar-main-section"]',
             '[data-vc-element="control-bar"]'
         ]
         const BUTTON_SELECTOR = '[data-seanime-skip-ahead-button="true"]'
+        const BUTTON_RUN_ID_ATTR = "data-seanime-skip-ahead-run-id"
+        const BUTTON_BOUND_ATTR = "data-seanime-skip-ahead-bound"
+        const BUTTON_KEY_ATTR = "data-seanime-skip-ahead-key"
+
+        console.log(LOG_PREFIX, "Plugin runtime started", { runId: RUN_ID })
 
         function getConfiguredSkipSeconds() {
             const rawValue = $getUserPreference("skipSeconds")
@@ -32,8 +64,17 @@ function init() {
             return parsed
         }
 
+        function getConfiguredPosition() {
+            const position = $getUserPreference("buttonPosition") || "after-next-episode"
+            if (!POSITION_SELECTORS[position]) return "after-next-episode"
+            return position
+        }
+
         let observerStops = []
         let cancelPolling = null
+        let lastSkipTriggerAt = 0
+        let buttonKeyCounter = 0
+        let buttonListenerStops: Record<string, () => void> = {}
 
         function cleanupObservers() {
             for (let i = 0; i < observerStops.length; i += 1) {
@@ -42,23 +83,17 @@ function init() {
             observerStops = []
         }
 
-        function getButtonText() {
-            return "+" + getConfiguredSkipSeconds() + "s"
+        function cleanupButtonListeners() {
+            for (const key in buttonListenerStops) {
+                if (Object.prototype.hasOwnProperty.call(buttonListenerStops, key)) {
+                    buttonListenerStops[key]()
+                    delete buttonListenerStops[key]
+                }
+            }
         }
 
-        function dedupeById(elements) {
-            const seen = {}
-            const unique = []
-
-            for (let i = 0; i < elements.length; i += 1) {
-                const el = elements[i]
-                if (!el || !el.id) continue
-                if (seen[el.id]) continue
-                seen[el.id] = true
-                unique.push(el)
-            }
-
-            return unique
+        function getButtonText() {
+            return "+" + getConfiguredSkipSeconds() + "s"
         }
 
         async function isLikelyVisible(element) {
@@ -78,105 +113,219 @@ function init() {
             }
         }
 
-        async function findTargetTimestamp() {
-            let allTimestamps = []
+        async function findTargetElement() {
+            const position = getConfiguredPosition()
+            const selectors = POSITION_SELECTORS[position]
 
-            for (let i = 0; i < TIMESTAMP_SELECTORS.length; i += 1) {
-                const timestamps = await ctx.dom.query(TIMESTAMP_SELECTORS[i])
-                allTimestamps = allTimestamps.concat(timestamps)
-            }
-
-            const uniqueTimestamps = dedupeById(allTimestamps)
-            if (uniqueTimestamps.length === 0) return null
-
-            for (let i = 0; i < uniqueTimestamps.length; i += 1) {
-                if (await isLikelyVisible(uniqueTimestamps[i])) {
-                    return uniqueTimestamps[i]
+            for (let i = 0; i < selectors.length; i += 1) {
+                const elements = await ctx.dom.query(selectors[i])
+                for (let j = 0; j < elements.length; j += 1) {
+                    if (await isLikelyVisible(elements[j])) {
+                        return { element: elements[j], position }
+                    }
                 }
             }
 
-            return uniqueTimestamps[0]
+            for (let i = 0; i < FALLBACK_SELECTORS.length; i += 1) {
+                const elements = await ctx.dom.query(FALLBACK_SELECTORS[i])
+                for (let j = 0; j < elements.length; j += 1) {
+                    if (await isLikelyVisible(elements[j])) {
+                        return { element: elements[j], position: "after-next-episode" }
+                    }
+                }
+            }
+
+            for (let i = 0; i < FALLBACK_SELECTORS.length; i += 1) {
+                const elements = await ctx.dom.query(FALLBACK_SELECTORS[i])
+                if (elements.length > 0) {
+                    return { element: elements[0], position: "after-next-episode" }
+                }
+            }
+            return null
         }
 
-        async function ensureSkipButton(timestampElement) {
+        async function ensureSkipButton(target) {
+            if (!target) return null
+
             const buttonText = getButtonText()
-            const parent = await timestampElement.getParent()
-            if (!parent) return
+            const { element, position } = target
+            const parent = await element.getParent()
+            if (!parent) return null
 
             const existingButton = await parent.queryOne(BUTTON_SELECTOR)
             if (existingButton) {
                 existingButton.setText(buttonText)
-                return
+                const existingRunId = await existingButton.getAttribute(BUTTON_RUN_ID_ATTR)
+                if (existingRunId === RUN_ID) {
+                    const existingKey = await existingButton.getAttribute(BUTTON_KEY_ATTR)
+                    if (!existingKey) {
+                        existingButton.setAttribute(BUTTON_KEY_ATTR, RUN_ID + "-" + String(buttonKeyCounter++))
+                    }
+                    return existingButton
+                }
+
+                existingButton.remove()
             }
 
             const button = await ctx.dom.createElement("button")
             button.setAttribute("type", "button")
             button.setAttribute("data-seanime-skip-ahead-button", "true")
+            button.setAttribute(BUTTON_RUN_ID_ATTR, RUN_ID)
+            button.setAttribute(BUTTON_KEY_ATTR, RUN_ID + "-" + String(buttonKeyCounter++))
+            button.setAttribute("title", "Skip ahead")
+            button.setAttribute(
+                "class",
+                "ml-2 h-6 px-2 inline-flex items-center justify-center flex-shrink-0 rounded-md border border-white/30 bg-white/10 text-white text-xs leading-none cursor-pointer pointer-events-auto select-none relative z-[2] hover:bg-white/20 transition-colors"
+            )
             button.setText(buttonText)
 
-            button.setStyle("display", "inline-flex")
-            button.setStyle("align-items", "center")
-            button.setStyle("justify-content", "center")
-            button.setStyle("flex-shrink", "0")
-            button.setStyle("margin-left", "0.5rem")
-            button.setStyle("padding", "0.1rem 0.45rem")
-            button.setStyle("height", "1.5rem")
-            button.setStyle("border-radius", "0.375rem")
-            button.setStyle("border", "1px solid rgba(255, 255, 255, 0.25)")
-            button.setStyle("background", "rgba(255, 255, 255, 0.12)")
-            button.setStyle("color", "#ffffff")
-            button.setStyle("font-size", "0.8rem")
-            button.setStyle("line-height", "1")
-            button.setStyle("cursor", "pointer")
-
-            button.addEventListener("mouseenter", () => {
-                button.setStyle("background", "rgba(255, 255, 255, 0.2)")
-            })
-
-            button.addEventListener("mouseleave", () => {
-                button.setStyle("background", "rgba(255, 255, 255, 0.12)")
-            })
-
-            button.addEventListener("click", () => {
-                try {
-                    const skipSeconds = getConfiguredSkipSeconds()
-                    const playbackStatus = ctx.videoCore.getPlaybackStatus()
-                    if (!playbackStatus || playbackStatus.duration <= 1) return
-
-                    ctx.videoCore.seek(skipSeconds)
-                    ctx.videoCore.showMessage("Skipped +" + skipSeconds + "s", 1200)
-                } catch (error) {
-                    ctx.toast.warning("Could not skip right now")
-                }
-            })
-
-            timestampElement.after(button)
+            element.after(button)
+            return button
         }
 
-        async function attachButtons() {
-            const targetTimestamp = await findTargetTimestamp()
-            if (!targetTimestamp) return
+        async function runSkip(buttonId) {
+            const now = Date.now()
+            if (now - lastSkipTriggerAt < 250) return
+            lastSkipTriggerAt = now
 
-            await ensureSkipButton(targetTimestamp)
+            try {
+                const skipSeconds = getConfiguredSkipSeconds()
+                console.log(LOG_PREFIX, "Skip clicked", {
+                    skipSeconds: skipSeconds,
+                    buttonId: buttonId,
+                })
 
-            const allButtons = await ctx.dom.query(BUTTON_SELECTOR)
-            const uniqueButtons = dedupeById(allButtons)
+                await Promise.resolve(ctx.videoCore.seek(skipSeconds))
+                console.log(LOG_PREFIX, "videoCore.seek succeeded")
 
-            let targetButton = null
-            const targetParent = await targetTimestamp.getParent()
-            if (targetParent) {
-                targetButton = await targetParent.queryOne(BUTTON_SELECTOR)
+                ctx.videoCore.showMessage("Skipped +" + skipSeconds + "s", 1200)
+                console.log(LOG_PREFIX, "videoCore.showMessage dispatched")
+            } catch (error) {
+                console.error(LOG_PREFIX, "videoCore.seek failed", error)
+                try {
+                    const skipSeconds = getConfiguredSkipSeconds()
+                    const status = ctx.videoCore.getPlaybackStatus()
+                    const currentTime = status && typeof status.currentTime === "number" ? status.currentTime : 0
+                    const targetTime = Math.max(0, Math.floor(currentTime + skipSeconds))
+
+                    await Promise.resolve(ctx.playback.seek(targetTime))
+                    console.log(LOG_PREFIX, "playback.seek fallback succeeded")
+                    ctx.videoCore.showMessage("Skipped +" + skipSeconds + "s", 1200)
+                } catch (fallbackError) {
+                    console.error(LOG_PREFIX, "playback.seek fallback failed", fallbackError)
+                    ctx.toast.warning("Could not skip right now")
+                }
+            }
+        }
+
+        async function bindButtonListeners() {
+            const buttons = await ctx.dom.query(BUTTON_SELECTOR)
+            const activeKeys: Record<string, boolean> = {}
+            let newlyBoundCount = 0
+
+            for (let i = 0; i < buttons.length; i += 1) {
+                let buttonKey = await buttons[i].getAttribute(BUTTON_KEY_ATTR)
+                if (!buttonKey) {
+                    buttonKey = RUN_ID + "-" + String(buttonKeyCounter++)
+                    buttons[i].setAttribute(BUTTON_KEY_ATTR, buttonKey)
+                }
+
+                activeKeys[buttonKey] = true
+
+                if (buttonListenerStops[buttonKey]) {
+                    continue
+                }
+
+                buttons[i].setAttribute(BUTTON_BOUND_ATTR, RUN_ID)
+                const buttonId = buttons[i].id || buttonKey
+                const onPress = (event: any) => {
+                    if (event && typeof event.preventDefault === "function") {
+                        event.preventDefault()
+                    }
+                    if (event && typeof event.stopPropagation === "function") {
+                        event.stopPropagation()
+                    }
+
+                    console.log(LOG_PREFIX, "Skip button press captured", {
+                        buttonId: buttonId,
+                    })
+                    runSkip(buttonId)
+                }
+
+                const stopClick = buttons[i].addEventListener("click", onPress)
+                const stopPointerDown = buttons[i].addEventListener("pointerdown", onPress)
+                const stopMouseDown = buttons[i].addEventListener("mousedown", onPress)
+
+                buttonListenerStops[buttonKey] = () => {
+                    stopClick()
+                    stopPointerDown()
+                    stopMouseDown()
+                }
+                newlyBoundCount += 1
             }
 
-            for (let i = 0; i < uniqueButtons.length; i += 1) {
-                if (!targetButton || uniqueButtons[i].id !== targetButton.id) {
-                    uniqueButtons[i].remove()
+            if (newlyBoundCount > 0) {
+                console.log(LOG_PREFIX, "Bound button listeners", {
+                    count: newlyBoundCount,
+                    totalButtons: buttons.length,
+                })
+            }
+
+            for (const key in buttonListenerStops) {
+                if (!Object.prototype.hasOwnProperty.call(buttonListenerStops, key)) continue
+                if (activeKeys[key]) continue
+
+                buttonListenerStops[key]()
+                delete buttonListenerStops[key]
+            }
+        }
+
+        let attachInProgress = false
+        let attachQueued = false
+
+        async function attachButtons() {
+            if (attachInProgress) {
+                attachQueued = true
+                return
+            }
+
+            attachInProgress = true
+
+            const targetElement = await findTargetElement()
+            if (!targetElement) {
+                attachInProgress = false
+                if (attachQueued) {
+                    attachQueued = false
+                    attachButtons()
                 }
+                return
+            }
+
+            const targetButton = await ensureSkipButton(targetElement)
+
+            const allButtons = await ctx.dom.query(BUTTON_SELECTOR)
+
+            // Only dedupe once a target button definitely exists.
+            if (targetButton) {
+                for (let i = 0; i < allButtons.length; i += 1) {
+                    if (allButtons[i].id !== targetButton.id) {
+                        allButtons[i].remove()
+                    }
+                }
+            }
+
+            await bindButtonListeners()
+
+            attachInProgress = false
+            if (attachQueued) {
+                attachQueued = false
+                attachButtons()
             }
         }
 
         function start() {
             cleanupObservers()
+            cleanupButtonListeners()
 
             for (let i = 0; i < OBSERVE_SELECTORS.length; i += 1) {
                 const result = ctx.dom.observe(OBSERVE_SELECTORS[i], () => {
@@ -189,9 +338,7 @@ function init() {
             if (cancelPolling) {
                 cancelPolling()
             }
-            cancelPolling = ctx.setInterval(() => {
-                attachButtons()
-            }, 1500)
+            cancelPolling = null
 
             attachButtons()
         }
