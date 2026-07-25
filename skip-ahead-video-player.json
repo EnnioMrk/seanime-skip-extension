@@ -1,6 +1,6 @@
 {
     "id": "skip-ahead-video-player",
-    "name": "Skip Ahead Video Player Button",
+    "name": "Skip Ahead",
     "version": "1.2.0",
     "manifestURI": "https://raw.githubusercontent.com/EnnioMrk/seanime-skip-extension/refs/heads/main/skip-ahead-video-player.json",
     "language": "typescript",
